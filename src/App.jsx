@@ -445,6 +445,14 @@ function loadData(key) {
 }
 
 // ─────────────────────────────────────────
+// ANALYTICS
+// ─────────────────────────────────────────
+
+function trackEvent(name, params) {
+  try { if (window.gtag) window.gtag('event', name, params); } catch {}
+}
+
+// ─────────────────────────────────────────
 // POST-SESSION REFLECTION GENERATOR
 // ─────────────────────────────────────────
 
@@ -1797,18 +1805,21 @@ export default function Calib() {
       console.error("Storage load failed:", e);
       setStorageWarning(true);
     }
+    trackEvent("app_opened");
     setLoading(false);
   }, []);
 
   const handleOnboardingComplete = (data) => {
     setUser(data);
     saveData("calib:user", data);
+    trackEvent("onboarding_completed", { creative_type: data.creativeType, primary_pattern: data.profile?.[0]?.name });
   };
 
   const handleSaveSession = (session) => {
     const updated = [...sessions, session];
     setSessions(updated);
     saveData("calib:sessions", updated);
+    trackEvent("session_logged", { session_number: updated.length, ao: session.ao, energy: session.energy });
   };
 
   const handleSaveProjects = (updated) => {
