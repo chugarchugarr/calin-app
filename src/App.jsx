@@ -1,4 +1,22 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+// ─────────────────────────────────────────
+// SUPABASE
+// ─────────────────────────────────────────
+
+const SB_URL = "https://tieuutosriyosykcshdn.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpZXV1dG9zcml5b3N5a2NzaGRuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3NDU1MjQsImV4cCI6MjA4ODMyMTUyNH0.ixQ5dteC2coN_Lqonh1M0AmsLabYVYufVXo93F38hZU";
+const supabase = createClient(SB_URL, SB_KEY);
+
+// Silent fire-and-forget Supabase upsert — never blocks the UI
+async function sbSync(table, payload) {
+  try {
+    await supabase.from(table).upsert(payload, { onConflict: "id" });
+  } catch (e) {
+    console.warn("[calib:sync]", table, e?.message);
+  }
+}
 
 // ─────────────────────────────────────────
 // DATA
@@ -1781,7 +1799,15 @@ export default function Calib() {
   const [dismissedInsights, setDismissedInsights] = useState([]);
   const [storageWarning, setStorageWarning] = useState(false);
 
-  // Load all data on mount
+  // Auth state
+  const [authUser, setAuthUser] = useState(null);         // Supabase session user
+  const [showAuthPrompt, setShowAuthPrompt] = useState(false);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authSent, setAuthSent] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
+  const authDismissed = useRef(false);
+
+  // Load all data on mount + listen for Supabase auth changes
   useEffect(() => {
     try {
       // Test localStorage availability
@@ -1807,12 +1833,50 @@ export default function Calib() {
     }
     trackEvent("app_opened");
     setLoading(false);
+
+    // Supabase auth listener — pull cloud data on sign-in
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        setAuthUser(session.user);
+        setShowAuthPrompt(false);
+        trackEvent("auth_signed_in");
+        // Pull cloud data and merge (cloud wins on conflict)
+        try {
+          const uid = session.user.id;
+          const [{ data: sbProfile }, { data: sbSessions }, { data: sbProjects }, { data: sbDismissed }] = await Promise.all([
+            supabase.from("profiles").select("*").eq("id", uid).single(),
+            supabase.from("sessions").select("*").eq("user_id", uid).order("created_at", { ascending: true }),
+            supabase.from("projects").select("*").eq("user_id", uid),
+            supabase.from("dismissed_insights").select("rule_id").eq("user_id", uid),
+          ]);
+          if (sbProfile) { setUser(sbProfile.data); saveData("calib:user", sbProfile.data); }
+          if (sbSessions?.length) { setSessions(sbSessions.map(r => r.data)); saveData("calib:sessions", sbSessions.map(r => r.data)); }
+          if (sbProjects?.length) { setProjects(sbProjects.map(r => r.data)); saveData("calib:projects", sbProjects.map(r => r.data)); }
+          if (sbDismissed?.length) { const ids = sbDismissed.map(r => r.rule_id); setDismissedInsights(ids); saveData("calib:dismissed", ids); }
+        } catch (e) { console.warn("[calib:pull]", e?.message); }
+      } else {
+        setAuthUser(null);
+      }
+    });
+
+    // Show auth prompt after 60 seconds if not logged in and not dismissed
+    const promptTimer = setTimeout(() => {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (!session && !authDismissed.current) setShowAuthPrompt(true);
+      });
+    }, 60000);
+
+    return () => { subscription.unsubscribe(); clearTimeout(promptTimer); };
   }, []);
 
   const handleOnboardingComplete = (data) => {
     setUser(data);
     saveData("calib:user", data);
     trackEvent("onboarding_completed", { creative_type: data.creativeType, primary_pattern: data.profile?.[0]?.name });
+    // Silent cloud sync
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) sbSync("profiles", { id: session.user.id, data, updated_at: new Date().toISOString() });
+    });
   };
 
   const handleSaveSession = (session) => {
@@ -1820,17 +1884,31 @@ export default function Calib() {
     setSessions(updated);
     saveData("calib:sessions", updated);
     trackEvent("session_logged", { session_number: updated.length, ao: session.ao, energy: session.energy });
+    // Silent cloud sync
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      if (s?.user) sbSync("sessions", { id: session.id || `${s.user.id}_${session.timestamp}`, user_id: s.user.id, data: session, created_at: new Date().toISOString() });
+    });
   };
 
   const handleSaveProjects = (updated) => {
     setProjects(updated);
     saveData("calib:projects", updated);
+    // Silent cloud sync
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        updated.forEach(p => sbSync("projects", { id: p.id || `${session.user.id}_${p.name}`, user_id: session.user.id, data: p, updated_at: new Date().toISOString() }));
+      }
+    });
   };
 
   const handleDismissInsight = (ruleId) => {
     const updated = [...dismissedInsights, ruleId];
     setDismissedInsights(updated);
     saveData("calib:dismissed", updated);
+    // Silent cloud sync
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) sbSync("dismissed_insights", { id: `${session.user.id}_${ruleId}`, user_id: session.user.id, rule_id: ruleId });
+    });
   };
 
   const handleReset = () => {
@@ -1840,6 +1918,22 @@ export default function Calib() {
     saveData("calib:sessions", []);
     saveData("calib:projects", []);
     saveData("calib:dismissed", []);
+  };
+
+  const handleSendMagicLink = async () => {
+    if (!authEmail || !authEmail.includes("@")) return;
+    setAuthLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({ email: authEmail, options: { shouldCreateUser: true } });
+      if (!error) { setAuthSent(true); trackEvent("auth_magic_link_sent"); }
+      else console.warn("[calib:auth]", error.message);
+    } catch (e) { console.warn("[calib:auth]", e?.message); }
+    setAuthLoading(false);
+  };
+
+  const dismissAuthPrompt = () => {
+    authDismissed.current = true;
+    setShowAuthPrompt(false);
   };
 
   if (loading) return (
@@ -1874,6 +1968,61 @@ export default function Calib() {
         ? <Onboarding onComplete={handleOnboardingComplete} />
         : <MainApp user={user} sessions={sessions} projects={projects} onSaveSession={handleSaveSession} onSaveProject={handleSaveProjects} onReset={handleReset} dismissedInsights={dismissedInsights} onDismissInsight={handleDismissInsight} />
       }
+      {/* Auth prompt — floats over everything, shown 60s after load if not signed in */}
+      {showAuthPrompt && !authUser && (
+        <div style={{
+          position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+          width: "calc(100% - 48px)", maxWidth: 372, zIndex: 300,
+          background: "#1a1714", border: "1px solid rgba(232,96,44,0.35)",
+          borderRadius: 12, padding: "20px 20px 16px",
+          fontFamily: "'DM Sans',sans-serif", boxShadow: "0 8px 32px rgba(0,0,0,.6)"
+        }}>
+          <button onClick={dismissAuthPrompt} style={{
+            position: "absolute", top: 10, right: 12,
+            background: "none", border: "none", color: "rgba(255,255,255,0.35)",
+            fontSize: 18, cursor: "pointer", lineHeight: 1, padding: 0
+          }}>×</button>
+          {!authSent ? (
+            <>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#f0ede8", marginBottom: 4 }}>Save your data to the cloud</div>
+              <div style={{ fontSize: 11, color: "rgba(240,237,232,0.5)", marginBottom: 14, lineHeight: 1.5 }}>
+                Your data lives in this browser. Enter your email to back it up — no password needed.
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  type="email"
+                  placeholder="you@email.com"
+                  value={authEmail}
+                  onChange={e => setAuthEmail(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleSendMagicLink()}
+                  style={{
+                    flex: 1, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 8, padding: "8px 12px", color: "#f0ede8",
+                    fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none"
+                  }}
+                />
+                <button onClick={handleSendMagicLink} disabled={authLoading} style={{
+                  background: "#E8602C", border: "none", borderRadius: 8,
+                  padding: "8px 14px", color: "#fff", fontSize: 12, fontWeight: 600,
+                  cursor: authLoading ? "wait" : "pointer", whiteSpace: "nowrap", flexShrink: 0
+                }}>
+                  {authLoading ? "..." : "Send link"}
+                </button>
+              </div>
+              <div style={{ marginTop: 10, fontSize: 10, color: "rgba(240,237,232,0.3)", textAlign: "center" }}>
+                No password · no spam · just a login link
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#E8602C", marginBottom: 6 }}>Check your inbox</div>
+              <div style={{ fontSize: 11, color: "rgba(240,237,232,0.55)", lineHeight: 1.6 }}>
+                Magic link sent to <strong style={{ color: "#f0ede8" }}>{authEmail}</strong>. Click it to sync your data across devices.
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </>
   );
 }
