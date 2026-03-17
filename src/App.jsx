@@ -32,7 +32,7 @@ const FREE_SESSION_LIMIT = 10;
 //      but for anonymous users we pass the Supabase user_id as a query param using the
 //      Payment Link's "Allow customers to adjust quantity" → off, and Prefilled email.)
 // Simplest approach: use the link directly; webhook matches by email.
-const STRIPE_PAYMENT_LINK = "https://buy.stripe.com/REPLACE_WITH_YOUR_LINK";
+const STRIPE_PAYMENT_LINK = "https://buy.stripe.com/test_cNi4gA92L0Pxbny3JkgjC03";
 
 // Pro features summary for the modal
 const PRO_FEATURES = [
