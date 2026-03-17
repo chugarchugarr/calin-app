@@ -19,6 +19,30 @@ async function sbSync(table, payload) {
 }
 
 // ─────────────────────────────────────────
+// PAYWALL CONFIG
+// ─────────────────────────────────────────
+
+const FREE_SESSION_LIMIT = 10;
+
+// Replace with your real Stripe Payment Link URL.
+// In the Payment Link settings, set:
+//   - Success URL: https://calib-app-5r6n.vercel.app?upgraded=true
+//   - Pass client_reference_id via URL param: append ?client_reference_id={CUSTOMER_ID}
+//     (Stripe Payment Links support {CUSTOMER_ID} substitution for logged-in customers,
+//      but for anonymous users we pass the Supabase user_id as a query param using the
+//      Payment Link's "Allow customers to adjust quantity" → off, and Prefilled email.)
+// Simplest approach: use the link directly; webhook matches by email.
+const STRIPE_PAYMENT_LINK = "https://buy.stripe.com/REPLACE_WITH_YOUR_LINK";
+
+// Pro features summary for the modal
+const PRO_FEATURES = [
+  { icon: "◎", label: "Unlimited sessions", sub: "No cap — log every session, forever." },
+  { icon: "◉", label: "Full insight engine", sub: "All 12 insight rules active and personalized." },
+  { icon: "◈", label: "Pattern deep-dives", sub: "Reframes and read-backs for every pattern." },
+  { icon: "≡", label: "Session export", sub: "Download your full session history as JSON." },
+];
+
+// ─────────────────────────────────────────
 // DATA
 // ─────────────────────────────────────────
 
@@ -762,6 +786,130 @@ const CSS = `
 `;
 
 // ─────────────────────────────────────────
+// UPGRADE MODAL
+// ─────────────────────────────────────────
+
+function UpgradeModal({ onClose, sessionCount, authUser, upgradeSuccess }) {
+  const handleUpgrade = () => {
+    // Build the payment link URL.
+    // We pass the user's email as prefill so Stripe can match the customer.
+    let url = STRIPE_PAYMENT_LINK;
+    if (authUser?.email) {
+      url += `?prefilled_email=${encodeURIComponent(authUser.email)}`;
+    }
+    window.location.href = url;
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,.85)",
+      zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center",
+    }}>
+      <div style={{
+        width: "100%", maxWidth: 420,
+        background: "#141210", border: "1px solid #2A2520", borderBottom: "none",
+        padding: "32px 28px 48px",
+        fontFamily: "'DM Sans',sans-serif",
+        animation: "rise .35s cubic-bezier(.4,0,.2,1) both",
+      }}>
+        {/* Close */}
+        {onClose && !upgradeSuccess && (
+          <button onClick={onClose} style={{
+            position: "absolute", top: 16, right: 20,
+            background: "none", border: "none", color: "rgba(255,255,255,0.3)",
+            fontSize: 20, cursor: "pointer", lineHeight: 1, padding: 0,
+          }}>×</button>
+        )}
+
+        {upgradeSuccess ? (
+          /* ── Success state ── */
+          <>
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: ".15em", color: "#5E8B60", marginBottom: 16 }}>
+              ◉ Upgrade complete
+            </div>
+            <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 24, fontWeight: 700, lineHeight: 1.2, marginBottom: 12 }}>
+              You're in.
+            </div>
+            <div style={{ fontSize: 13, color: "rgba(240,237,232,0.55)", lineHeight: 1.7, marginBottom: 28 }}>
+              Unlimited sessions, full insights, complete pattern tracking. This is what calibrated looks like.
+            </div>
+            <button onClick={onClose} style={{
+              width: "100%", background: "#E8602C", border: "none",
+              padding: "16px 24px", color: "#fff",
+              fontFamily: "'DM Mono',monospace", fontSize: 11,
+              letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer",
+            }}>
+              Start a Session →
+            </button>
+          </>
+        ) : (
+          /* ── Gate state ── */
+          <>
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: ".15em", color: "#E8602C", marginBottom: 16 }}>
+              {sessionCount >= FREE_SESSION_LIMIT ? `${FREE_SESSION_LIMIT} free sessions used` : "calib pro"}
+            </div>
+            <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 22, fontWeight: 700, lineHeight: 1.2, marginBottom: 10 }}>
+              {sessionCount >= FREE_SESSION_LIMIT
+                ? "You've hit the free limit."
+                : "Unlock the full system."}
+            </div>
+            <div style={{ fontSize: 13, color: "rgba(240,237,232,0.5)", lineHeight: 1.7, marginBottom: 24 }}>
+              {sessionCount >= FREE_SESSION_LIMIT
+                ? `${FREE_SESSION_LIMIT} sessions of data collected. The pattern is forming. Keep going.`
+                : "Everything you need to stop self-sabotaging your creative work."}
+            </div>
+
+            {/* Feature list */}
+            <div style={{ marginBottom: 28 }}>
+              {PRO_FEATURES.map(f => (
+                <div key={f.label} style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 14 }}>
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 14, color: "#E8602C", flexShrink: 0, marginTop: 1 }}>{f.icon}</div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#F0EAE0", marginBottom: 2 }}>{f.label}</div>
+                    <div style={{ fontSize: 11, color: "rgba(240,237,232,0.4)", lineHeight: 1.5 }}>{f.sub}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Price */}
+            <div style={{ padding: "14px 18px", background: "#1C1916", border: "1px solid rgba(232,96,44,0.2)", marginBottom: 20 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 28, fontWeight: 900, color: "#F0EAE0" }}>$9</span>
+                <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "rgba(240,237,232,0.4)", textTransform: "uppercase", letterSpacing: ".08em" }}>/ month</span>
+              </div>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "rgba(240,237,232,0.35)", marginTop: 4 }}>
+                Cancel anytime. No contracts.
+              </div>
+            </div>
+
+            {!authUser && (
+              <div style={{ padding: "10px 14px", background: "rgba(232,96,44,0.08)", border: "1px solid rgba(232,96,44,0.15)", marginBottom: 16, fontSize: 11, color: "rgba(240,237,232,0.5)", lineHeight: 1.6 }}>
+                ⚠ Save your email first (below) so your pro status syncs to your account after payment.
+              </div>
+            )}
+
+            <button onClick={handleUpgrade} style={{
+              width: "100%", background: "#E8602C", border: "none",
+              padding: "18px 24px", color: "#fff",
+              fontFamily: "'DM Mono',monospace", fontSize: 11,
+              letterSpacing: ".12em", textTransform: "uppercase", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}>
+              <span>Upgrade to Pro</span>
+              <span>$9/mo →</span>
+            </button>
+            <div style={{ textAlign: "center", marginTop: 12, fontFamily: "'DM Mono',monospace", fontSize: 9, color: "rgba(240,237,232,0.25)", textTransform: "uppercase", letterSpacing: ".08em" }}>
+              Stripe-secured · Cancel anytime
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────
 // ONBOARDING
 // ─────────────────────────────────────────
 
@@ -885,7 +1033,7 @@ function Onboarding({ onComplete }) {
 // MAIN APP
 // ─────────────────────────────────────────
 
-function MainApp({ user, sessions, projects, onSaveSession, onSaveProject, onReset, dismissedInsights, onDismissInsight }) {
+function MainApp({ user, sessions, projects, onSaveSession, onSaveProject, onReset, dismissedInsights, onDismissInsight, isPro, authUser, onUpgradeClick }) {
   const [screen, setScreen] = useState("dashboard");
   const [checkinStep, setCheckinStep] = useState(0);
   const [checkinAnswers, setCheckinAnswers] = useState({});
@@ -1016,7 +1164,16 @@ function MainApp({ user, sessions, projects, onSaveSession, onSaveProject, onRes
     <div className="wrap">
       <div className="app-header">
         <div className="app-logo">calib<span>.</span></div>
-        <div className="app-header-right">{user.name}<br />{new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {isPro ? (
+            <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: ".1em", padding: "3px 8px", background: "rgba(94,139,96,0.15)", border: "1px solid rgba(94,139,96,0.3)", color: "#5E8B60" }}>Pro</span>
+          ) : (
+            <button onClick={onUpgradeClick} style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: ".1em", padding: "4px 10px", background: "rgba(232,96,44,0.12)", border: "1px solid rgba(232,96,44,0.3)", color: "#E8602C", cursor: "pointer" }}>
+              Upgrade
+            </button>
+          )}
+          <div className="app-header-right">{user.name}<br />{new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+        </div>
       </div>
 
       <div className="app-content">
@@ -1067,9 +1224,24 @@ function MainApp({ user, sessions, projects, onSaveSession, onSaveProject, onRes
             ) : (
               /* NORMAL DASHBOARD — has data */
               <>
-                <button className="start-btn" onClick={() => { setCheckinStep(0); setAo(null); setSelectedProject(null); setSelectedPhase(null); setCheckinAnswers({}); setScreen("checkin"); }}>
-                  <div><div>Start Session</div><div className="start-btn-sub">Pre-session check-in · 2 min</div></div>
-                  <div>→</div>
+                <button className="start-btn" onClick={() => {
+                  if (!isPro && sessions.length >= FREE_SESSION_LIMIT) {
+                    onUpgradeClick();
+                    return;
+                  }
+                  setCheckinStep(0); setAo(null); setSelectedProject(null); setSelectedPhase(null); setCheckinAnswers({}); setScreen("checkin");
+                }}>
+                  <div>
+                    <div>Start Session</div>
+                    <div className="start-btn-sub">
+                      {!isPro && sessions.length >= FREE_SESSION_LIMIT
+                        ? `Free limit reached — upgrade to continue`
+                        : !isPro
+                          ? `${sessions.length} / ${FREE_SESSION_LIMIT} free sessions used`
+                          : "Pre-session check-in · 2 min"}
+                    </div>
+                  </div>
+                  <div>{!isPro && sessions.length >= FREE_SESSION_LIMIT ? "↑" : "→"}</div>
                 </button>
 
                 <div className="section" style={{ marginTop: 28 }}>
@@ -1768,7 +1940,10 @@ calib.app`;
         {[{ key: "dashboard", icon: "⌂", label: "Home" }, { key: "checkin", icon: "◎", label: "Session" }, { key: "insights", icon: "◉", label: "Insights" }, { key: "profile", icon: "◈", label: "Profile" }, { key: "library", icon: "≡", label: "Library" }].map(n => (
           <div key={n.key} className={`nav-item ${(screen === n.key || (n.key === "insights" && screen === "insights")) ? "active" : ""}`}
             onClick={() => {
-              if (n.key === "checkin") { setCheckinStep(0); setAo(null); setSelectedProject(null); setSelectedPhase(null); setCheckinAnswers({}); }
+              if (n.key === "checkin") {
+                if (!isPro && sessions.length >= FREE_SESSION_LIMIT) { onUpgradeClick(); return; }
+                setCheckinStep(0); setAo(null); setSelectedProject(null); setSelectedPhase(null); setCheckinAnswers({});
+              }
               if (n.key === "library") { setActivePattern(null); }
               if (n.key === "insights") { setActiveInsight(null); }
               setScreen(n.key);
@@ -1807,6 +1982,11 @@ export default function Calib() {
   const [authLoading, setAuthLoading] = useState(false);
   const authDismissed = useRef(false);
 
+  // Paywall state
+  const [isPro, setIsPro] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [upgradeSuccess, setUpgradeSuccess] = useState(false);
+
   // Load all data on mount + listen for Supabase auth changes
   useEffect(() => {
     try {
@@ -1834,6 +2014,16 @@ export default function Calib() {
     trackEvent("app_opened");
     setLoading(false);
 
+    // Check for ?upgraded=true redirect from Stripe Payment Link
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("upgraded") === "true") {
+      setUpgradeSuccess(true);
+      setShowUpgradeModal(true);
+      trackEvent("upgrade_success_redirect");
+      // Clean the URL
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+
     // Supabase auth listener — pull cloud data on sign-in
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
@@ -1849,13 +2039,25 @@ export default function Calib() {
             supabase.from("projects").select("*").eq("user_id", uid),
             supabase.from("dismissed_insights").select("rule_id").eq("user_id", uid),
           ]);
-          if (sbProfile) { setUser(sbProfile.data); saveData("calib:user", sbProfile.data); }
+          if (sbProfile) {
+            setUser(sbProfile.data);
+            saveData("calib:user", sbProfile.data);
+            // Set pro status from Supabase profile
+            const proStatus = sbProfile.stripe_status === "pro";
+            const periodEnd = sbProfile.stripe_current_period_end;
+            const isStillPro = proStatus && (!periodEnd || new Date(periodEnd) > new Date());
+            setIsPro(isStillPro);
+            saveData("calib:isPro", isStillPro);
+          }
           if (sbSessions?.length) { setSessions(sbSessions.map(r => r.data)); saveData("calib:sessions", sbSessions.map(r => r.data)); }
           if (sbProjects?.length) { setProjects(sbProjects.map(r => r.data)); saveData("calib:projects", sbProjects.map(r => r.data)); }
           if (sbDismissed?.length) { const ids = sbDismissed.map(r => r.rule_id); setDismissedInsights(ids); saveData("calib:dismissed", ids); }
         } catch (e) { console.warn("[calib:pull]", e?.message); }
       } else {
         setAuthUser(null);
+        // Restore pro status from localStorage if signed out (persists between sessions)
+        const cachedPro = loadData("calib:isPro");
+        if (cachedPro) setIsPro(true);
       }
     });
 
@@ -1966,10 +2168,20 @@ export default function Calib() {
       <div className="grain" />
       {!user
         ? <Onboarding onComplete={handleOnboardingComplete} />
-        : <MainApp user={user} sessions={sessions} projects={projects} onSaveSession={handleSaveSession} onSaveProject={handleSaveProjects} onReset={handleReset} dismissedInsights={dismissedInsights} onDismissInsight={handleDismissInsight} />
+        : <MainApp user={user} sessions={sessions} projects={projects} onSaveSession={handleSaveSession} onSaveProject={handleSaveProjects} onReset={handleReset} dismissedInsights={dismissedInsights} onDismissInsight={handleDismissInsight} isPro={isPro} authUser={authUser} onUpgradeClick={() => { setUpgradeSuccess(false); setShowUpgradeModal(true); }} />
       }
+      {/* Upgrade Modal — paywall gate */}
+      {showUpgradeModal && (
+        <UpgradeModal
+          onClose={() => setShowUpgradeModal(false)}
+          sessionCount={sessions.length}
+          authUser={authUser}
+          upgradeSuccess={upgradeSuccess}
+        />
+      )}
+
       {/* Auth prompt — floats over everything, shown 60s after load if not signed in */}
-      {showAuthPrompt && !authUser && (
+      {showAuthPrompt && !authUser && !showUpgradeModal && (
         <div style={{
           position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
           width: "calc(100% - 48px)", maxWidth: 372, zIndex: 300,
